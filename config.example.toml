@@ -36,6 +36,12 @@ source_url = "https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz"
 #                     LLVM/clang during slimming.
 jit = false
 # llvm_version = "19.1.7"   # optional override, must match the CPython minor
+# Optional: full URL to the LLVM tarball. Use this when the default
+# LLVM-{ver}-Linux-{X64,ARM64}.tar.xz asset is missing for your version+arch
+# (e.g. LLVM 19.1.7 on aarch64 only ships as clang+llvm-...-aarch64-linux-gnu.tar.xz).
+# The tarball must have a single top-level directory containing bin/, lib/, etc.;
+# we extract with --strip-components=1.
+# llvm_url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/clang+llvm-19.1.7-aarch64-linux-gnu.tar.xz"
 # Passed verbatim to `./configure`. Do NOT add --enable-experimental-jit here;
 # it is managed by the `jit` flag above.
 configure_args = [

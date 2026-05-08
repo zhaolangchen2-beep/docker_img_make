@@ -99,6 +99,7 @@ class Config:
     py_configure: list[str]
     py_jit: bool
     py_llvm_version: str
+    py_llvm_url: str   # optional override; empty → use built-in template
     gcc_version: str
     gcc_slug: str
     gcc_url: str
@@ -133,6 +134,7 @@ class Config:
                 py_configure=list(cpy.get("configure_args", [])),
                 py_jit=bool(cpy.get("jit", False)),
                 py_llvm_version=str(cpy.get("llvm_version", "")),
+                py_llvm_url=str(cpy.get("llvm_url", "")).strip(),
                 gcc_version=gcc["version"],
                 gcc_slug=gcc["slug"],
                 gcc_url=gcc["source_url"],
@@ -203,17 +205,20 @@ def render_dockerfile(cfg: Config, base_ref: str | None = None) -> str:
     py_path_prefix = ""
     if cfg.py_jit:
         arch = host_arch()
-        llvm_arch = LLVM_ASSET_ARCH.get(arch)
-        if llvm_arch is None:
-            raise SystemExit(
-                f"unsupported arch {arch!r} for LLVM prebuilt download; "
-                f"set cpython.jit=false or extend LLVM_ASSET_ARCH"
-            )
         llvm_ver = cfg.py_llvm_version
-        llvm_url = (
-            f"https://github.com/llvm/llvm-project/releases/download/"
-            f"llvmorg-{llvm_ver}/LLVM-{llvm_ver}-Linux-{llvm_arch}.tar.xz"
-        )
+        if cfg.py_llvm_url:
+            llvm_url = cfg.py_llvm_url
+        else:
+            llvm_arch = LLVM_ASSET_ARCH.get(arch)
+            if llvm_arch is None:
+                raise SystemExit(
+                    f"unsupported arch {arch!r} for default LLVM URL; "
+                    f"set cpython.llvm_url or cpython.jit=false"
+                )
+            llvm_url = (
+                f"https://github.com/llvm/llvm-project/releases/download/"
+                f"llvmorg-{llvm_ver}/LLVM-{llvm_ver}-Linux-{llvm_arch}.tar.xz"
+            )
         llvm_stage = f"""
 # ---- 1b. LLVM {llvm_ver} (build-time only, for CPython JIT; removed during slim) ----
 RUN set -eux; \\
