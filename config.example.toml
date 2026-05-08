@@ -1,0 +1,48 @@
+# Example: openEuler 24.03 SP1 + CPython 3.14.3 + GCC 14.2.0
+# Output filename: oe2403sp1-py3143-gcc14-<arch>.tar.gz
+
+[base]
+# Image source. One of:
+#   "registry" — pull `image` via `docker pull` (default)
+#   "tarball"  — download `image_url` (tar / tar.gz / tar.xz / tar.bz2)
+#                and load via `docker import`
+source = "registry"
+# Used when source = "registry"
+image = "openeuler/openeuler:24.03-lts-sp1"
+# Used when source = "tarball"
+# image_url = "https://example.com/openeuler-24.03-sp1-aarch64.tar.xz"
+# Short slug used in the output filename.
+os_slug = "oe2403sp1"
+# Package manager family: "dnf", "yum", or "apt".
+pkg_mgr = "dnf"
+
+[cpython]
+version = "3.14.3"
+# Short slug used in the output filename (no dots).
+slug = "py3143"
+# Source tarball URL. Must be a .tgz / .tar.gz / .tar.xz.
+source_url = "https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz"
+# Passed verbatim to `./configure`.
+configure_args = [
+    "--enable-optimizations",
+    "--with-lto",
+    "--enable-shared",
+    "--prefix=/usr/local",
+]
+
+[gcc]
+version = "14.2.0"
+slug = "gcc14"
+source_url = "https://ftp.gnu.org/gnu/gcc/gcc-14.2.0/gcc-14.2.0.tar.xz"
+configure_args = [
+    "--enable-languages=c,c++",
+    "--disable-multilib",
+    "--disable-bootstrap",
+    "--prefix=/usr/local",
+]
+
+[build]
+# 0 = use nproc inside the container.
+jobs = 0
+# Extra build dependencies to install on top of a sane default for pkg_mgr.
+extra_packages = []

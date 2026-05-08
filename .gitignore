@@ -1,0 +1,8 @@
+out/
+*.tar
+*.tar.gz
+*.tar.xz
+__pycache__/
+*.pyc
+config.toml
+.DS_Store
