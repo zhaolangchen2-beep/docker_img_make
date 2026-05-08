@@ -56,17 +56,18 @@ See `config.example.toml`. Key fields:
 
 ### CPython JIT
 
-Default `configure_args` include `--enable-experimental-jit=yes-off` — JIT is
-compiled in but **not** active at runtime, costs nothing extra to build.
+The `cpython.jit` flag is the single source of truth — do **not** put
+`--enable-experimental-jit` in `configure_args` (any such entry is dropped).
 
-Set `cpython.jit = true` to:
-- download a matching LLVM prebuilt from the `llvm-project` GitHub releases
-  into `/opt/llvm-<ver>` (build-time only)
-- substitute `--enable-experimental-jit=yes-off` → `=yes`
-- remove `/opt/llvm*` during the slim stage
+| `cpython.jit` | configure flag | LLVM |
+|---|---|---|
+| `false` (default) | not passed | not installed |
+| `true` | `--enable-experimental-jit=yes-off` (compiled in, off at runtime) | downloaded, used during build, removed during slim |
 
-LLVM minor must match the CPython minor (3.13 → LLVM 18, 3.14 → LLVM 19);
-mismatched versions are rejected by CPython's build system.
+When `jit = true`, a matching LLVM prebuilt is fetched from the
+`llvm-project` GitHub releases into `/opt/llvm-<ver>` and `rm -rf`'d in the
+slim stage. LLVM minor must match the CPython minor (3.13 → LLVM 18,
+3.14 → LLVM 19); mismatched versions are rejected by CPython's build system.
 
 ## How it works
 

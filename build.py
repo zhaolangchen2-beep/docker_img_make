@@ -165,15 +165,12 @@ def render_dockerfile(cfg: Config, base_ref: str | None = None) -> str:
 
     py_mm = py_major_minor(cfg.py_version)
 
-    # JIT: substitute yes-off → yes when enabled
-    py_args = list(cfg.py_configure)
+    # JIT: only inject the flag when enabled. Drop any user-supplied
+    # --enable-experimental-jit so the `jit` toggle is the single source of truth.
+    py_args = [a for a in cfg.py_configure
+               if not a.startswith("--enable-experimental-jit")]
     if cfg.py_jit:
-        py_args = [
-            a.replace("--enable-experimental-jit=yes-off", "--enable-experimental-jit=yes")
-            for a in py_args
-        ]
-        if not any(a.startswith("--enable-experimental-jit") for a in py_args):
-            py_args.append("--enable-experimental-jit=yes")
+        py_args.append("--enable-experimental-jit=yes-off")
     py_cfg = " ".join(py_args)
     gcc_cfg = " ".join(cfg.gcc_configure)
 

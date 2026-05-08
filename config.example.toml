@@ -22,21 +22,23 @@ version = "3.14.3"
 slug = "py3143"
 # Source tarball URL. Must be a .tgz / .tar.gz / .tar.xz.
 source_url = "https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz"
-# JIT (PEP 744). When true:
-#   - downloads a matching LLVM prebuilt from the official llvm-project
-#     GitHub releases (CPython 3.13.* → LLVM 18.1.8, 3.14.* → LLVM 19.1.7
-#     by default; override with `llvm_version` below)
-#   - replaces `--enable-experimental-jit=yes-off` with `=yes`
-#   - removes LLVM/clang from the final image during slimming
-# When false the JIT is built but disabled at runtime (yes-off).
+# JIT (PEP 744).
+#   false (default) — no JIT at all; --enable-experimental-jit is NOT passed
+#                     to configure, no LLVM is downloaded.
+#   true            — installs a matching LLVM prebuilt from the official
+#                     llvm-project GitHub releases (CPython 3.13.* → LLVM
+#                     18.1.8, 3.14.* → 19.1.7; override with `llvm_version`),
+#                     auto-injects --enable-experimental-jit=yes-off so the
+#                     JIT is compiled in but disabled at runtime, and removes
+#                     LLVM/clang during slimming.
 jit = false
 # llvm_version = "19.1.7"   # optional override, must match the CPython minor
-# Passed verbatim to `./configure` (after JIT substitution above).
+# Passed verbatim to `./configure`. Do NOT add --enable-experimental-jit here;
+# it is managed by the `jit` flag above.
 configure_args = [
     "--enable-optimizations",
     "--with-lto",
     "--enable-shared",
-    "--enable-experimental-jit=yes-off",
     "--prefix=/usr/local",
 ]
 
