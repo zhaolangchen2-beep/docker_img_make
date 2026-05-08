@@ -58,3 +58,11 @@ configure_args = [
 jobs = 0
 # Extra build dependencies to install on top of a sane default for pkg_mgr.
 extra_packages = []
+
+# Optional. Proxy used ONLY during the build (passed via Docker's predefined
+# proxy build-args, never written into the image config or the export).
+# Leave empty / omit the whole section to build without a proxy.
+[proxy]
+http  = ""   # e.g. "http://10.0.0.1:8080"
+https = ""   # e.g. "http://10.0.0.1:8080"
+no    = ""   # e.g. "localhost,127.0.0.1,::1,.internal"

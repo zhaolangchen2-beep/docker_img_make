@@ -54,6 +54,31 @@ See `config.example.toml`. Key fields:
 - `build.jobs` — `0` for `nproc`
 - `build.extra_packages` — extra build deps on top of the per-pkgmgr defaults
 
+### Proxy
+
+Optional `[proxy]` section for build-time downloads only:
+
+```toml
+[proxy]
+http  = "http://10.0.0.1:8080"
+https = "http://10.0.0.1:8080"
+no    = "localhost,127.0.0.1,::1"
+```
+
+These values are forwarded to `docker build` via the predefined proxy
+build-args (`http_proxy` / `HTTP_PROXY` / `https_proxy` / `HTTPS_PROXY` /
+`no_proxy` / `NO_PROXY`). They flow into every `RUN` as env vars but are
+**not** written to the image config, and `docker export` discards image
+config anyway, so the resulting tarball never carries proxy settings.
+
+The same env vars are applied on the host when the tool downloads the base
+rootfs (tarball mode).
+
+> Limitation: in `source = "registry"` mode the actual `docker pull` is
+> done by the docker daemon, not the build. If your daemon needs a proxy
+> to reach the registry, configure it at the daemon level (e.g.
+> `/etc/systemd/system/docker.service.d/http-proxy.conf`).
+
 ### CPython JIT
 
 The `cpython.jit` flag is the single source of truth — do **not** put

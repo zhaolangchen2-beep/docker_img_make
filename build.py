@@ -92,6 +92,9 @@ class Config:
     gcc_configure: list[str]
     jobs: int
     extra_packages: list[str]
+    proxy_http: str
+    proxy_https: str
+    proxy_no: str
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -102,6 +105,7 @@ class Config:
             cpy = data["cpython"]
             gcc = data["gcc"]
             build = data.get("build", {})
+            proxy = data.get("proxy", {})
             source = base.get("source", "registry")
             cfg = cls(
                 base_source=source,
@@ -121,6 +125,9 @@ class Config:
                 gcc_configure=list(gcc.get("configure_args", [])),
                 jobs=int(build.get("jobs", 0)),
                 extra_packages=list(build.get("extra_packages", [])),
+                proxy_http=str(proxy.get("http", "")).strip(),
+                proxy_https=str(proxy.get("https", "")).strip(),
+                proxy_no=str(proxy.get("no", "")).strip(),
             )
         except KeyError as e:
             sys.exit(f"config error: missing key {e}")
@@ -275,14 +282,43 @@ def run(cmd: list[str], **kw) -> None:
     subprocess.run(cmd, check=True, **kw)
 
 
-def import_base_tarball(url: str, tag: str, workdir: Path) -> str:
+def proxy_build_args(cfg: Config) -> list[str]:
+    """Docker predefined proxy build-args. They transparently flow into every
+    RUN as env vars but are NOT written to the image config, so they vanish
+    automatically when we `docker export` the container."""
+    args: list[str] = []
+    pairs = [
+        ("http_proxy", cfg.proxy_http),  ("HTTP_PROXY", cfg.proxy_http),
+        ("https_proxy", cfg.proxy_https), ("HTTPS_PROXY", cfg.proxy_https),
+        ("no_proxy", cfg.proxy_no),       ("NO_PROXY", cfg.proxy_no),
+    ]
+    for name, val in pairs:
+        if val:
+            args += ["--build-arg", f"{name}={val}"]
+    return args
+
+
+def proxy_env(cfg: Config) -> dict[str, str]:
+    """Env for host-side downloads (wget for tarball base image)."""
+    env = os.environ.copy()
+    if cfg.proxy_http:
+        env["http_proxy"] = env["HTTP_PROXY"] = cfg.proxy_http
+    if cfg.proxy_https:
+        env["https_proxy"] = env["HTTPS_PROXY"] = cfg.proxy_https
+    if cfg.proxy_no:
+        env["no_proxy"] = env["NO_PROXY"] = cfg.proxy_no
+    return env
+
+
+def import_base_tarball(url: str, tag: str, workdir: Path, env: dict[str, str]) -> str:
     """Download a base OS rootfs tarball and import it as a docker image."""
     workdir.mkdir(parents=True, exist_ok=True)
     fname = url.rstrip("/").split("/")[-1] or "base.tar"
     local = workdir / fname
     if not local.exists():
         print(f"[+] downloading base tarball {url}")
-        run(["wget", "-O", str(local), url])
+        print("+", "wget", "-O", str(local), url, flush=True)
+        subprocess.run(["wget", "-O", str(local), url], check=True, env=env)
     else:
         print(f"[+] reusing cached base tarball {local}")
     print(f"[+] docker import → {tag}")
@@ -302,16 +338,19 @@ def build_and_export(cfg: Config, output_dir: Path, keep_image: bool) -> Path:
     workdir = output_dir / f".build-{name}"
     workdir.mkdir(exist_ok=True)
 
+    env = proxy_env(cfg)
     base_ref: str | None = None
     if cfg.base_source == "tarball":
         base_tag = f"{cfg.os_slug}-base:imported"
-        base_ref = import_base_tarball(cfg.base_image_url, base_tag, workdir / "base")
+        base_ref = import_base_tarball(cfg.base_image_url, base_tag, workdir / "base", env)
 
     dockerfile = workdir / "Dockerfile"
     dockerfile.write_text(render_dockerfile(cfg, base_ref=base_ref))
     print(f"[+] Dockerfile written to {dockerfile}")
 
-    run(["docker", "build", "-t", image_tag, "-f", str(dockerfile), str(workdir)])
+    build_cmd = ["docker", "build", *proxy_build_args(cfg),
+                 "-t", image_tag, "-f", str(dockerfile), str(workdir)]
+    run(build_cmd)
 
     container = f"export-{name}"
     subprocess.run(["docker", "rm", "-f", container],
