@@ -60,6 +60,18 @@ PKG_CACHE_CLEAN = {
     "apt": "apt-get clean && rm -rf /var/lib/apt/lists/*",
 }
 
+# CPython minor → matching LLVM version for the JIT (PEP 744).
+DEFAULT_LLVM_FOR_CPYTHON = {
+    "3.13": "18.1.8",
+    "3.14": "19.1.7",
+}
+
+# uname -m → LLVM release asset arch suffix
+LLVM_ASSET_ARCH = {
+    "x86_64": "X64",
+    "aarch64": "ARM64",
+}
+
 
 @dataclass
 class Config:
@@ -72,6 +84,8 @@ class Config:
     py_slug: str
     py_url: str
     py_configure: list[str]
+    py_jit: bool
+    py_llvm_version: str
     gcc_version: str
     gcc_slug: str
     gcc_url: str
@@ -99,6 +113,8 @@ class Config:
                 py_slug=cpy["slug"],
                 py_url=cpy["source_url"],
                 py_configure=list(cpy.get("configure_args", [])),
+                py_jit=bool(cpy.get("jit", False)),
+                py_llvm_version=str(cpy.get("llvm_version", "")),
                 gcc_version=gcc["version"],
                 gcc_slug=gcc["slug"],
                 gcc_url=gcc["source_url"],
@@ -116,6 +132,15 @@ class Config:
             sys.exit("config error: base.image is required when source='registry'")
         if cfg.base_source == "tarball" and not cfg.base_image_url:
             sys.exit("config error: base.image_url is required when source='tarball'")
+        if cfg.py_jit and not cfg.py_llvm_version:
+            mm = py_major_minor(cfg.py_version)
+            llvm = DEFAULT_LLVM_FOR_CPYTHON.get(mm)
+            if not llvm:
+                sys.exit(
+                    f"config error: cpython.jit=true but no default LLVM mapping for "
+                    f"CPython {mm}; set cpython.llvm_version explicitly"
+                )
+            cfg.py_llvm_version = llvm
         return cfg
 
 
@@ -139,8 +164,49 @@ def render_dockerfile(cfg: Config, base_ref: str | None = None) -> str:
     j_expr = "$(nproc)" if jobs == 0 else str(jobs)
 
     py_mm = py_major_minor(cfg.py_version)
-    py_cfg = " ".join(cfg.py_configure)
+
+    # JIT: substitute yes-off → yes when enabled
+    py_args = list(cfg.py_configure)
+    if cfg.py_jit:
+        py_args = [
+            a.replace("--enable-experimental-jit=yes-off", "--enable-experimental-jit=yes")
+            for a in py_args
+        ]
+        if not any(a.startswith("--enable-experimental-jit") for a in py_args):
+            py_args.append("--enable-experimental-jit=yes")
+    py_cfg = " ".join(py_args)
     gcc_cfg = " ".join(cfg.gcc_configure)
+
+    # LLVM install stage (only when JIT is on)
+    llvm_stage = ""
+    py_path_prefix = ""
+    if cfg.py_jit:
+        arch = host_arch()
+        llvm_arch = LLVM_ASSET_ARCH.get(arch)
+        if llvm_arch is None:
+            raise SystemExit(
+                f"unsupported arch {arch!r} for LLVM prebuilt download; "
+                f"set cpython.jit=false or extend LLVM_ASSET_ARCH"
+            )
+        llvm_ver = cfg.py_llvm_version
+        llvm_url = (
+            f"https://github.com/llvm/llvm-project/releases/download/"
+            f"llvmorg-{llvm_ver}/LLVM-{llvm_ver}-Linux-{llvm_arch}.tar.xz"
+        )
+        llvm_stage = f"""
+# ---- 1b. LLVM {llvm_ver} (build-time only, for CPython JIT; removed during slim) ----
+RUN set -eux; \\
+    mkdir -p /opt; \\
+    cd /tmp; \\
+    wget -O llvm.tar.xz "{llvm_url}"; \\
+    mkdir -p /opt/llvm-{llvm_ver}; \\
+    tar -xf llvm.tar.xz -C /opt/llvm-{llvm_ver} --strip-components=1; \\
+    rm -f llvm.tar.xz; \\
+    ln -sfn /opt/llvm-{llvm_ver} /opt/llvm; \\
+    /opt/llvm/bin/clang --version
+ENV PATH=/opt/llvm/bin:$PATH
+"""
+        py_path_prefix = "PATH=/opt/llvm/bin:$PATH "
 
     from_ref = base_ref or cfg.base_image
     # Single-RUN strategy per stage so removals actually shrink the export.
@@ -152,7 +218,7 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # ---- 1. Build deps ----
 RUN {install} {deps_str} && {pkg_clean}
-
+{llvm_stage}
 # ---- 2. Build & install CPython {cfg.py_version}, set as default ----
 RUN set -eux; \\
     mkdir -p /usr/local/src && cd /usr/local/src; \\
@@ -160,7 +226,7 @@ RUN set -eux; \\
     tar -xf python.tar.gz; \\
     rm -f python.tar.gz; \\
     cd Python-{cfg.py_version}; \\
-    ./configure {py_cfg}; \\
+    {py_path_prefix}./configure {py_cfg}; \\
     make -j{j_expr}; \\
     make install; \\
     ldconfig || true; \\
@@ -194,7 +260,7 @@ RUN set -eux; \\
 
 # ---- 4. Slim ----
 RUN set -eux; \\
-    rm -rf /usr/local/src /tmp/* /var/tmp/* /root/.cache /root/.wget-hsts; \\
+    rm -rf /opt/llvm /opt/llvm-* /usr/local/src /tmp/* /var/tmp/* /root/.cache /root/.wget-hsts; \\
     find /usr/local/lib /usr/local/lib64 -name '*.la' -delete 2>/dev/null || true; \\
     find /usr/local -depth -type d -name __pycache__ -exec rm -rf {{}} + 2>/dev/null || true; \\
     find /usr/local/lib -depth -type d -name test -exec rm -rf {{}} + 2>/dev/null || true; \\

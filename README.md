@@ -43,13 +43,30 @@ docker run --rm -it my/oe-py-gcc:latest gcc --version
 
 See `config.example.toml`. Key fields:
 
-- `base.image` — base OS image to pull
+- `base.source` — `registry` (docker pull) or `tarball` (download + docker import)
+- `base.image` / `base.image_url` — used by the matching `source`
 - `base.os_slug` — short name used in the output filename
 - `base.pkg_mgr` — `dnf`, `yum`, or `apt`
 - `cpython.{version,slug,source_url,configure_args}`
+- `cpython.jit` — enable PEP 744 JIT (see below)
+- `cpython.llvm_version` — optional override; defaults: 3.13.* → 18.1.8, 3.14.* → 19.1.7
 - `gcc.{version,slug,source_url,configure_args}`
 - `build.jobs` — `0` for `nproc`
 - `build.extra_packages` — extra build deps on top of the per-pkgmgr defaults
+
+### CPython JIT
+
+Default `configure_args` include `--enable-experimental-jit=yes-off` — JIT is
+compiled in but **not** active at runtime, costs nothing extra to build.
+
+Set `cpython.jit = true` to:
+- download a matching LLVM prebuilt from the `llvm-project` GitHub releases
+  into `/opt/llvm-<ver>` (build-time only)
+- substitute `--enable-experimental-jit=yes-off` → `=yes`
+- remove `/opt/llvm*` during the slim stage
+
+LLVM minor must match the CPython minor (3.13 → LLVM 18, 3.14 → LLVM 19);
+mismatched versions are rejected by CPython's build system.
 
 ## How it works
 
