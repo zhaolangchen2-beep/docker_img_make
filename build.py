@@ -55,6 +55,18 @@ PKG_INSTALL = {
     "apt": "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends",
 }
 
+def insecure_install_cmd(pkg_mgr: str) -> str:
+    """Variant of PKG_INSTALL[pkg_mgr] that disables TLS verification."""
+    base = PKG_INSTALL[pkg_mgr]
+    if pkg_mgr in ("dnf", "yum"):
+        return base + " --setopt=sslverify=False"
+    if pkg_mgr == "apt":
+        opts = " -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false"
+        return (base
+                .replace("apt-get update", "apt-get update" + opts)
+                .replace("apt-get install", "apt-get install" + opts))
+    return base
+
 PKG_CACHE_CLEAN = {
     "dnf": "dnf clean all && rm -rf /var/cache/dnf /var/cache/yum",
     "yum": "yum clean all && rm -rf /var/cache/yum",
@@ -93,6 +105,7 @@ class Config:
     gcc_configure: list[str]
     jobs: int
     extra_packages: list[str]
+    insecure_ssl: bool
     proxy_http: str
     proxy_https: str
     proxy_no: str
@@ -126,6 +139,7 @@ class Config:
                 gcc_configure=list(gcc.get("configure_args", [])),
                 jobs=int(build.get("jobs", 0)),
                 extra_packages=list(build.get("extra_packages", [])),
+                insecure_ssl=bool(build.get("insecure_ssl", False)),
                 proxy_http=str(proxy.get("http", "")).strip(),
                 proxy_https=str(proxy.get("https", "")).strip(),
                 proxy_no=str(proxy.get("no", "")).strip(),
@@ -166,8 +180,10 @@ def render_dockerfile(cfg: Config, base_ref: str | None = None) -> str:
     """`base_ref` overrides the FROM line — used for tarball-imported images."""
     deps = DEFAULT_DEPS[cfg.pkg_mgr] + cfg.extra_packages
     deps_str = " ".join(deps)
-    install = PKG_INSTALL[cfg.pkg_mgr]
+    install = (insecure_install_cmd(cfg.pkg_mgr)
+               if cfg.insecure_ssl else PKG_INSTALL[cfg.pkg_mgr])
     pkg_clean = PKG_CACHE_CLEAN[cfg.pkg_mgr]
+    wget = "wget --no-check-certificate" if cfg.insecure_ssl else "wget"
     jobs = cfg.jobs if cfg.jobs > 0 else 0  # 0 → use $(nproc) at runtime
     j_expr = "$(nproc)" if jobs == 0 else str(jobs)
 
@@ -203,7 +219,7 @@ def render_dockerfile(cfg: Config, base_ref: str | None = None) -> str:
 RUN set -eux; \\
     mkdir -p /opt; \\
     cd /tmp; \\
-    wget -O llvm.tar.xz "{llvm_url}"; \\
+    {wget} -O llvm.tar.xz "{llvm_url}"; \\
     mkdir -p /opt/llvm-{llvm_ver}; \\
     tar -xf llvm.tar.xz -C /opt/llvm-{llvm_ver} --strip-components=1; \\
     rm -f llvm.tar.xz; \\
@@ -227,7 +243,7 @@ RUN {install} {deps_str} && {pkg_clean}
 # ---- 2. Build & install CPython {cfg.py_version}, set as default ----
 RUN set -eux; \\
     mkdir -p /usr/local/src && cd /usr/local/src; \\
-    wget -O python.tar.gz "{cfg.py_url}"; \\
+    {wget} -O python.tar.gz "{cfg.py_url}"; \\
     tar -xf python.tar.gz; \\
     rm -f python.tar.gz; \\
     cd Python-{cfg.py_version}; \\
@@ -245,7 +261,7 @@ RUN set -eux; \\
 # ---- 3. Build & install GCC {cfg.gcc_version}, set as default ----
 RUN set -eux; \\
     mkdir -p /usr/local/src && cd /usr/local/src; \\
-    wget -O gcc-src.tar.xz "{cfg.gcc_url}"; \\
+    {wget} -O gcc-src.tar.xz "{cfg.gcc_url}"; \\
     mkdir gcc-src && tar -xf gcc-src.tar.xz -C gcc-src --strip-components=1; \\
     rm -f gcc-src.tar.xz; \\
     cd gcc-src; \\
@@ -325,7 +341,8 @@ def detect_tar_format(path: Path) -> str:
     return "rootfs"
 
 
-def load_or_import_base(url: str, tag: str, workdir: Path, env: dict[str, str]) -> str:
+def load_or_import_base(url: str, tag: str, workdir: Path, env: dict[str, str],
+                        insecure: bool = False) -> str:
     """Fetch a base OS tarball and surface it as a docker image ref.
 
     Auto-detects:
@@ -338,8 +355,12 @@ def load_or_import_base(url: str, tag: str, workdir: Path, env: dict[str, str]) 
     local = workdir / fname
     if not local.exists():
         print(f"[+] downloading base tarball {url}")
-        print("+", "wget", "-O", str(local), url, flush=True)
-        subprocess.run(["wget", "-O", str(local), url], check=True, env=env)
+        wget_cmd = ["wget"]
+        if insecure:
+            wget_cmd.append("--no-check-certificate")
+        wget_cmd += ["-O", str(local), url]
+        print("+", " ".join(wget_cmd), flush=True)
+        subprocess.run(wget_cmd, check=True, env=env)
     else:
         print(f"[+] reusing cached base tarball {local}")
 
@@ -381,7 +402,10 @@ def build_and_export(cfg: Config, output_dir: Path, keep_image: bool) -> Path:
     base_ref: str | None = None
     if cfg.base_source == "tarball":
         base_tag = f"{cfg.os_slug}-base:imported"
-        base_ref = load_or_import_base(cfg.base_image_url, base_tag, workdir / "base", env)
+        base_ref = load_or_import_base(
+            cfg.base_image_url, base_tag, workdir / "base", env,
+            insecure=cfg.insecure_ssl,
+        )
 
     dockerfile = workdir / "Dockerfile"
     dockerfile.write_text(render_dockerfile(cfg, base_ref=base_ref))

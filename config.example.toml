@@ -61,6 +61,13 @@ configure_args = [
 jobs = 0
 # Extra build dependencies to install on top of a sane default for pkg_mgr.
 extra_packages = []
+# When true, disable TLS certificate verification for ALL downloads done
+# during build:
+#   - host-side wget (base tarball)
+#   - in-container wget (CPython/GCC/LLVM source tarballs)
+#   - dnf/yum (sslverify=False) and apt (Acquire::https::Verify-Peer=false)
+# Use only on trusted networks where the proxy/MITM intercepts TLS.
+insecure_ssl = false
 
 # Optional. Proxy used ONLY during the build (passed via Docker's predefined
 # proxy build-args, never written into the image config or the export).
