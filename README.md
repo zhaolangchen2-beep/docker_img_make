@@ -43,7 +43,9 @@ docker run --rm -it my/oe-py-gcc:latest gcc --version
 
 See `config.example.toml`. Key fields:
 
-- `base.source` — `registry` (docker pull) or `tarball` (download + docker import)
+- `base.source` — `registry` (docker pull) or `tarball` (download a tarball;
+  auto-detects `docker save` archives → `docker load`, or flat rootfs
+  tarballs → `docker import`)
 - `base.image` / `base.image_url` — used by the matching `source`
 - `base.os_slug` — short name used in the output filename
 - `base.pkg_mgr` — `dnf`, `yum`, or `apt`

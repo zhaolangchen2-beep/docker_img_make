@@ -9,8 +9,11 @@
 source = "registry"
 # Used when source = "registry"
 image = "openeuler/openeuler:24.03-lts-sp1"
-# Used when source = "tarball"
-# image_url = "https://example.com/openeuler-24.03-sp1-aarch64.tar.xz"
+# Used when source = "tarball". Auto-detected as either:
+#   * a `docker save` archive (has manifest.json at top level) → docker load
+#   * a flat rootfs tarball                                    → docker import
+# Example (openEuler official is a save archive, NOT a rootfs):
+# image_url = "https://repo.openeuler.org/openEuler-24.03-LTS-SP1/docker_img/aarch64/openEuler-docker.aarch64.tar.xz"
 # Short slug used in the output filename.
 os_slug = "oe2403sp1"
 # Package manager family: "dnf", "yum", or "apt".

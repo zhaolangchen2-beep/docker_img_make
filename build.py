@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -310,8 +311,28 @@ def proxy_env(cfg: Config) -> dict[str, str]:
     return env
 
 
-def import_base_tarball(url: str, tag: str, workdir: Path, env: dict[str, str]) -> str:
-    """Download a base OS rootfs tarball and import it as a docker image."""
+def detect_tar_format(path: Path) -> str:
+    """Return 'archive' for a `docker save` tarball (has manifest.json at the
+    top level), 'rootfs' otherwise (treat as a flat filesystem tarball)."""
+    res = subprocess.run(
+        ["tar", "-tf", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    for line in res.stdout.splitlines()[:1000]:
+        s = line.strip().lstrip("./").rstrip("/")
+        if s == "manifest.json":
+            return "archive"
+    return "rootfs"
+
+
+def load_or_import_base(url: str, tag: str, workdir: Path, env: dict[str, str]) -> str:
+    """Fetch a base OS tarball and surface it as a docker image ref.
+
+    Auto-detects:
+      - `docker save` archive (has manifest.json) → `docker load`, return the
+        image tag from the load output (or the image ID, if untagged).
+      - rootfs tarball → `docker import` under the requested tag.
+    """
     workdir.mkdir(parents=True, exist_ok=True)
     fname = url.rstrip("/").split("/")[-1] or "base.tar"
     local = workdir / fname
@@ -321,6 +342,24 @@ def import_base_tarball(url: str, tag: str, workdir: Path, env: dict[str, str]) 
         subprocess.run(["wget", "-O", str(local), url], check=True, env=env)
     else:
         print(f"[+] reusing cached base tarball {local}")
+
+    fmt = detect_tar_format(local)
+    print(f"[+] detected tarball format: {fmt}")
+    if fmt == "archive":
+        print(f"[+] docker load -i {local}")
+        out = subprocess.check_output(
+            ["docker", "load", "-i", str(local)], text=True,
+        )
+        sys.stdout.write(out)
+        m = re.search(r"Loaded image(?: ID)?:\s*(\S+)", out)
+        if not m:
+            sys.exit(f"error: could not parse `docker load` output:\n{out}")
+        loaded = m.group(1)
+        # Re-tag under our slug so the FROM line is stable across runs even
+        # when the upstream archive ships an untagged ID.
+        run(["docker", "tag", loaded, tag])
+        return tag
+
     print(f"[+] docker import → {tag}")
     run(["docker", "import", str(local), tag])
     return tag
@@ -342,7 +381,7 @@ def build_and_export(cfg: Config, output_dir: Path, keep_image: bool) -> Path:
     base_ref: str | None = None
     if cfg.base_source == "tarball":
         base_tag = f"{cfg.os_slug}-base:imported"
-        base_ref = import_base_tarball(cfg.base_image_url, base_tag, workdir / "base", env)
+        base_ref = load_or_import_base(cfg.base_image_url, base_tag, workdir / "base", env)
 
     dockerfile = workdir / "Dockerfile"
     dockerfile.write_text(render_dockerfile(cfg, base_ref=base_ref))
