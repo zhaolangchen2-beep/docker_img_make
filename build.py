@@ -231,8 +231,7 @@ ENV PATH=/opt/llvm/bin:$PATH
 
     from_ref = base_ref or cfg.base_image
     # Single-RUN strategy per stage so removals actually shrink the export.
-    return f"""# syntax=docker/dockerfile:1
-FROM {from_ref}
+    return f"""FROM {from_ref}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
