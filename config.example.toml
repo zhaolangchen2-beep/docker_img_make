@@ -63,6 +63,11 @@ configure_args = [
 ]
 
 [build]
+# Renderer profile:
+#   "single" (default) — one CPython + one source GCC (original flow)
+#   "multi"           — multiple CPythons side-by-side + dual GCC (yum + source,
+#                        switchable via update-alternatives)
+renderer = "single"
 # 0 = use nproc inside the container.
 jobs = 0
 # Extra build dependencies to install on top of a sane default for pkg_mgr.
@@ -82,3 +87,40 @@ insecure_ssl = false
 http  = ""   # e.g. "http://10.0.0.1:8080"
 https = ""   # e.g. "http://10.0.0.1:8080"
 no    = ""   # e.g. "localhost,127.0.0.1,::1,.internal"
+
+# =============================================================================
+# Multi-CPython + Dual-GCC example (renderer = "multi")
+# =============================================================================
+# [base]
+# source = "registry"
+# image = "openeuler/openeuler:24.03-lts-sp1"
+# os_slug = "oe2403sp1"
+# pkg_mgr = "dnf"
+#
+# [cpython]
+# versions = ["3.13.8", "3.14.3"]
+# slugs = ["py3138", "py3143"]
+# source_url_template = "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
+# configure_args = ["--enable-optimizations", "--with-lto", "--enable-shared"]
+#
+# [gcc]
+# version = "14.2.0"
+# slug = "gcc14"
+# source_url = "https://ftp.gnu.org/gnu/gcc/gcc-14.2.0/gcc-14.2.0.tar.xz"
+# configure_args = [
+#     "--enable-languages=c,c++",
+#     "--disable-multilib",
+#     "--disable-bootstrap",
+#     "--prefix=/usr/local",
+# ]
+#
+# [build]
+# renderer = "multi"
+# jobs = 0
+#
+# # Output: oe2403sp1-py3138_py3143-gcc14-<arch>.tar.gz
+# # CPython 3.13.8 → /usr/local/cpython-3.13  (default: python3/python/pip3/pip)
+# # CPython 3.14.3 → /usr/local/cpython-3.14
+# # GCC 14.2.0  → /usr/local/bin/gcc  (default, priority 20)
+# # GCC 12      → /usr/bin/gcc-12    (yum, priority 10)
+# # Switch: update-alternatives --config gcc

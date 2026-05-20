@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a slim OS image bundling a specific CPython and GCC, both built from source.
+"""Build a slim OS image bundling CPython and GCC, both built from source.
 
 Usage:
     ./build.py --config config.toml [--output-dir ./out] [--keep-image]
@@ -11,78 +11,18 @@ from __future__ import annotations
 
 import argparse
 import os
-import platform
 import re
 import shutil
 import subprocess
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-
-DEFAULT_DEPS = {
-    "dnf": [
-        "gcc", "gcc-c++", "make", "wget", "tar", "xz", "bzip2", "patch",
-        "diffutils", "findutils", "which", "file", "ca-certificates",
-        "zlib-devel", "bzip2-devel", "xz-devel", "openssl-devel",
-        "libffi-devel", "readline-devel", "sqlite-devel", "ncurses-devel",
-        "tk-devel", "gdbm-devel", "libuuid-devel",
-        "gmp-devel", "mpfr-devel", "libmpc-devel", "isl-devel",
-        "flex", "bison", "texinfo",
-    ],
-    "yum": [
-        "gcc", "gcc-c++", "make", "wget", "tar", "xz", "bzip2", "patch",
-        "diffutils", "findutils", "which", "file", "ca-certificates",
-        "zlib-devel", "bzip2-devel", "xz-devel", "openssl-devel",
-        "libffi-devel", "readline-devel", "sqlite-devel", "ncurses-devel",
-        "gmp-devel", "mpfr-devel", "libmpc-devel",
-        "flex", "bison",
-    ],
-    "apt": [
-        "build-essential", "wget", "ca-certificates", "xz-utils", "bzip2",
-        "patch", "file",
-        "zlib1g-dev", "libbz2-dev", "liblzma-dev", "libssl-dev", "libffi-dev",
-        "libreadline-dev", "libsqlite3-dev", "libncurses-dev", "tk-dev",
-        "libgdbm-dev", "uuid-dev",
-        "libgmp-dev", "libmpfr-dev", "libmpc-dev", "libisl-dev",
-        "flex", "bison", "texinfo",
-    ],
-}
-
-PKG_INSTALL = {
-    "dnf": "dnf install -y --setopt=install_weak_deps=False",
-    "yum": "yum install -y",
-    "apt": "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends",
-}
-
-def insecure_install_cmd(pkg_mgr: str) -> str:
-    """Variant of PKG_INSTALL[pkg_mgr] that disables TLS verification."""
-    base = PKG_INSTALL[pkg_mgr]
-    if pkg_mgr in ("dnf", "yum"):
-        return base + " --setopt=sslverify=False"
-    if pkg_mgr == "apt":
-        opts = " -o Acquire::https::Verify-Peer=false -o Acquire::https::Verify-Host=false"
-        return (base
-                .replace("apt-get update", "apt-get update" + opts)
-                .replace("apt-get install", "apt-get install" + opts))
-    return base
-
-PKG_CACHE_CLEAN = {
-    "dnf": "dnf clean all && rm -rf /var/cache/dnf /var/cache/yum",
-    "yum": "yum clean all && rm -rf /var/cache/yum",
-    "apt": "apt-get clean && rm -rf /var/lib/apt/lists/*",
-}
 
 # CPython minor → matching LLVM version for the JIT (PEP 744).
 DEFAULT_LLVM_FOR_CPYTHON = {
     "3.13": "18.1.8",
     "3.14": "19.1.7",
-}
-
-# uname -m → LLVM release asset arch suffix
-LLVM_ASSET_ARCH = {
-    "x86_64": "X64",
-    "aarch64": "ARM64",
 }
 
 
@@ -93,20 +33,29 @@ class Config:
     base_image_url: str       # tarball URL (when source=tarball)
     os_slug: str
     pkg_mgr: str
+    renderer_name: str        # "single" (default) | "multi"
+    # single-mode CPython
     py_version: str
     py_slug: str
     py_url: str
-    py_configure: list[str]
     py_jit: bool
     py_llvm_version: str
-    py_llvm_url: str   # optional override; empty → use built-in template
+    py_llvm_url: str
+    # multi-mode CPython
+    py_versions: list[str]
+    py_source_url_template: str
+    # common CPython
+    py_configure: list[str]
+    # GCC
     gcc_version: str
     gcc_slug: str
     gcc_url: str
     gcc_configure: list[str]
+    # build
     jobs: int
     extra_packages: list[str]
     insecure_ssl: bool
+    # proxy
     proxy_http: str
     proxy_https: str
     proxy_no: str
@@ -122,32 +71,94 @@ class Config:
             build = data.get("build", {})
             proxy = data.get("proxy", {})
             source = base.get("source", "registry")
-            cfg = cls(
-                base_source=source,
-                base_image=base.get("image", ""),
-                base_image_url=base.get("image_url", ""),
-                os_slug=base["os_slug"],
-                pkg_mgr=base.get("pkg_mgr", "dnf"),
-                py_version=cpy["version"],
-                py_slug=cpy["slug"],
-                py_url=cpy["source_url"],
-                py_configure=list(cpy.get("configure_args", [])),
-                py_jit=bool(cpy.get("jit", False)),
-                py_llvm_version=str(cpy.get("llvm_version", "")),
-                py_llvm_url=str(cpy.get("llvm_url", "")).strip(),
-                gcc_version=gcc["version"],
-                gcc_slug=gcc["slug"],
-                gcc_url=gcc["source_url"],
-                gcc_configure=list(gcc.get("configure_args", [])),
-                jobs=int(build.get("jobs", 0)),
-                extra_packages=list(build.get("extra_packages", [])),
-                insecure_ssl=bool(build.get("insecure_ssl", False)),
-                proxy_http=str(proxy.get("http", "")).strip(),
-                proxy_https=str(proxy.get("https", "")).strip(),
-                proxy_no=str(proxy.get("no", "")).strip(),
-            )
+            renderer_name = build.get("renderer", "single")
+
+            if renderer_name == "single":
+                cfg = cls(
+                    base_source=source,
+                    base_image=base.get("image", ""),
+                    base_image_url=base.get("image_url", ""),
+                    os_slug=base["os_slug"],
+                    pkg_mgr=base.get("pkg_mgr", "dnf"),
+                    renderer_name="single",
+                    py_version=cpy["version"],
+                    py_slug=cpy["slug"],
+                    py_url=cpy["source_url"],
+                    py_configure=list(cpy.get("configure_args", [])),
+                    py_jit=bool(cpy.get("jit", False)),
+                    py_llvm_version=str(cpy.get("llvm_version", "")),
+                    py_llvm_url=str(cpy.get("llvm_url", "")).strip(),
+                    py_versions=[],
+                    py_source_url_template="",
+                    gcc_version=gcc["version"],
+                    gcc_slug=gcc["slug"],
+                    gcc_url=gcc["source_url"],
+                    gcc_configure=list(gcc.get("configure_args", [])),
+                    jobs=int(build.get("jobs", 0)),
+                    extra_packages=list(build.get("extra_packages", [])),
+                    insecure_ssl=bool(build.get("insecure_ssl", False)),
+                    proxy_http=str(proxy.get("http", "")).strip(),
+                    proxy_https=str(proxy.get("https", "")).strip(),
+                    proxy_no=str(proxy.get("no", "")).strip(),
+                )
+                if not cfg.py_slug:
+                    sys.exit("config error: cpython.slug is required when renderer='single'")
+                if not cfg.py_url:
+                    sys.exit("config error: cpython.source_url is required when renderer='single'")
+                if not cfg.py_version:
+                    sys.exit("config error: cpython.version is required when renderer='single'")
+            elif renderer_name == "multi":
+                py_versions_raw = cpy.get("versions", [])
+                py_slugs_raw = cpy.get("slugs", [])
+                if not py_versions_raw:
+                    sys.exit("config error: cpython.versions is required when renderer='multi'")
+                if not py_slugs_raw:
+                    sys.exit("config error: cpython.slugs is required when renderer='multi'")
+                if len(py_versions_raw) != len(py_slugs_raw):
+                    sys.exit("config error: cpython.versions and cpython.slugs must have the same length")
+                py_versions = [str(v) for v in py_versions_raw]
+                py_slugs = [str(s) for s in py_slugs_raw]
+                source_url_template = cpy.get("source_url_template", "")
+                if not source_url_template:
+                    sys.exit("config error: cpython.source_url_template is required when renderer='multi'")
+                # Validate template can render with first version
+                try:
+                    source_url_template.format(version=py_versions[0])
+                except KeyError as e:
+                    sys.exit(f"config error: cpython.source_url_template uses unsupported placeholder {e}")
+                cfg = cls(
+                    base_source=source,
+                    base_image=base.get("image", ""),
+                    base_image_url=base.get("image_url", ""),
+                    os_slug=base["os_slug"],
+                    pkg_mgr=base.get("pkg_mgr", "dnf"),
+                    renderer_name="multi",
+                    py_version="",  # unused in multi
+                    py_slug="_".join(py_slugs),
+                    py_url="",  # unused in multi
+                    py_configure=list(cpy.get("configure_args", [])),
+                    py_jit=False,  # multi mode: no JIT
+                    py_llvm_version="",
+                    py_llvm_url="",
+                    py_versions=py_versions,
+                    py_source_url_template=source_url_template,
+                    gcc_version=gcc["version"],
+                    gcc_slug=gcc["slug"],
+                    gcc_url=gcc["source_url"],
+                    gcc_configure=list(gcc.get("configure_args", [])),
+                    jobs=int(build.get("jobs", 0)),
+                    extra_packages=list(build.get("extra_packages", [])),
+                    insecure_ssl=bool(build.get("insecure_ssl", False)),
+                    proxy_http=str(proxy.get("http", "")).strip(),
+                    proxy_https=str(proxy.get("https", "")).strip(),
+                    proxy_no=str(proxy.get("no", "")).strip(),
+                )
+            else:
+                sys.exit(f"config error: unknown renderer {renderer_name!r}")
         except KeyError as e:
             sys.exit(f"config error: missing key {e}")
+
+        from renderers._common import DEFAULT_DEPS
         if cfg.pkg_mgr not in DEFAULT_DEPS:
             sys.exit(f"config error: unsupported pkg_mgr {cfg.pkg_mgr!r}")
         if cfg.base_source not in ("registry", "tarball"):
@@ -156,7 +167,10 @@ class Config:
             sys.exit("config error: base.image is required when source='registry'")
         if cfg.base_source == "tarball" and not cfg.base_image_url:
             sys.exit("config error: base.image_url is required when source='tarball'")
-        if cfg.py_jit and not cfg.py_llvm_version:
+
+        # JIT LLVM version auto-detection (single mode only)
+        if cfg.renderer_name == "single" and cfg.py_jit and not cfg.py_llvm_version:
+            from renderers._common import py_major_minor
             mm = py_major_minor(cfg.py_version)
             llvm = DEFAULT_LLVM_FOR_CPYTHON.get(mm)
             if not llvm:
@@ -166,141 +180,6 @@ class Config:
                 )
             cfg.py_llvm_version = llvm
         return cfg
-
-
-def host_arch() -> str:
-    m = platform.machine().lower()
-    return {"amd64": "x86_64", "arm64": "aarch64"}.get(m, m)
-
-
-def py_major_minor(version: str) -> str:
-    parts = version.split(".")
-    return f"{parts[0]}.{parts[1]}"
-
-
-def render_dockerfile(cfg: Config, base_ref: str | None = None) -> str:
-    """`base_ref` overrides the FROM line — used for tarball-imported images."""
-    deps = DEFAULT_DEPS[cfg.pkg_mgr] + cfg.extra_packages
-    deps_str = " ".join(deps)
-    install = (insecure_install_cmd(cfg.pkg_mgr)
-               if cfg.insecure_ssl else PKG_INSTALL[cfg.pkg_mgr])
-    pkg_clean = PKG_CACHE_CLEAN[cfg.pkg_mgr]
-    wget = "wget --no-check-certificate" if cfg.insecure_ssl else "wget"
-    jobs = cfg.jobs if cfg.jobs > 0 else 0  # 0 → use $(nproc) at runtime
-    j_expr = "$(nproc)" if jobs == 0 else str(jobs)
-
-    py_mm = py_major_minor(cfg.py_version)
-
-    # JIT: only inject the flag when enabled. Drop any user-supplied
-    # --enable-experimental-jit so the `jit` toggle is the single source of truth.
-    py_args = [a for a in cfg.py_configure
-               if not a.startswith("--enable-experimental-jit")]
-    if cfg.py_jit:
-        py_args.append("--enable-experimental-jit=yes-off")
-    py_cfg = " ".join(py_args)
-    gcc_cfg = " ".join(cfg.gcc_configure)
-
-    # LLVM install stage (only when JIT is on)
-    llvm_stage = ""
-    py_path_prefix = ""
-    if cfg.py_jit:
-        arch = host_arch()
-        llvm_ver = cfg.py_llvm_version
-        if cfg.py_llvm_url:
-            llvm_url = cfg.py_llvm_url
-        else:
-            llvm_arch = LLVM_ASSET_ARCH.get(arch)
-            if llvm_arch is None:
-                raise SystemExit(
-                    f"unsupported arch {arch!r} for default LLVM URL; "
-                    f"set cpython.llvm_url or cpython.jit=false"
-                )
-            llvm_url = (
-                f"https://github.com/llvm/llvm-project/releases/download/"
-                f"llvmorg-{llvm_ver}/LLVM-{llvm_ver}-Linux-{llvm_arch}.tar.xz"
-            )
-        llvm_stage = f"""
-# ---- 1b. LLVM {llvm_ver} (build-time only, for CPython JIT; removed during slim) ----
-RUN set -eux; \\
-    mkdir -p /opt; \\
-    cd /tmp; \\
-    {wget} -O llvm.tar.xz "{llvm_url}"; \\
-    mkdir -p /opt/llvm-{llvm_ver}; \\
-    tar -xf llvm.tar.xz -C /opt/llvm-{llvm_ver} --strip-components=1; \\
-    rm -f llvm.tar.xz; \\
-    ln -sfn /opt/llvm-{llvm_ver} /opt/llvm; \\
-    /opt/llvm/bin/clang --version
-ENV PATH=/opt/llvm/bin:$PATH
-"""
-        py_path_prefix = "PATH=/opt/llvm/bin:$PATH "
-
-    from_ref = base_ref or cfg.base_image
-    # Single-RUN strategy per stage so removals actually shrink the export.
-    return f"""FROM {from_ref}
-
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-
-# ---- 1. Build deps ----
-RUN {install} {deps_str} && {pkg_clean}
-{llvm_stage}
-# ---- 2. Build & install CPython {cfg.py_version}, set as default ----
-RUN set -eux; \\
-    mkdir -p /usr/local/src && cd /usr/local/src; \\
-    {wget} -O python.tar.gz "{cfg.py_url}"; \\
-    tar -xf python.tar.gz; \\
-    rm -f python.tar.gz; \\
-    cd Python-{cfg.py_version}; \\
-    {py_path_prefix}./configure {py_cfg}; \\
-    make -j{j_expr}; \\
-    make install; \\
-    ldconfig || true; \\
-    ln -sf /usr/local/bin/python{py_mm} /usr/local/bin/python3; \\
-    ln -sf /usr/local/bin/python3 /usr/local/bin/python; \\
-    ln -sf /usr/local/bin/pip{py_mm} /usr/local/bin/pip3 2>/dev/null || true; \\
-    ln -sf /usr/local/bin/pip3 /usr/local/bin/pip 2>/dev/null || true; \\
-    cd / && rm -rf /usr/local/src/Python-{cfg.py_version}; \\
-    python3 --version
-
-# ---- 3. Build & install GCC {cfg.gcc_version}, set as default ----
-RUN set -eux; \\
-    mkdir -p /usr/local/src && cd /usr/local/src; \\
-    {wget} -O gcc-src.tar.xz "{cfg.gcc_url}"; \\
-    mkdir gcc-src && tar -xf gcc-src.tar.xz -C gcc-src --strip-components=1; \\
-    rm -f gcc-src.tar.xz; \\
-    cd gcc-src; \\
-    ./contrib/download_prerequisites || true; \\
-    mkdir ../gcc-build && cd ../gcc-build; \\
-    ../gcc-src/configure {gcc_cfg}; \\
-    make -j{j_expr}; \\
-    make install-strip; \\
-    cd / && rm -rf /usr/local/src/gcc-src /usr/local/src/gcc-build; \\
-    echo "/usr/local/lib64" > /etc/ld.so.conf.d/local-gcc.conf; \\
-    echo "/usr/local/lib"   >> /etc/ld.so.conf.d/local-gcc.conf; \\
-    ldconfig; \\
-    for tool in gcc g++ cpp gcov c++; do \\
-        if [ -x /usr/local/bin/$tool ]; then ln -sf /usr/local/bin/$tool /usr/bin/$tool; fi; \\
-    done; \\
-    gcc --version; g++ --version
-
-# ---- 4. Slim ----
-RUN set -eux; \\
-    rm -rf /opt/llvm /opt/llvm-* /usr/local/src /tmp/* /var/tmp/* /root/.cache /root/.wget-hsts; \\
-    find /usr/local/lib /usr/local/lib64 -name '*.la' -delete 2>/dev/null || true; \\
-    find /usr/local -depth -type d -name __pycache__ -exec rm -rf {{}} + 2>/dev/null || true; \\
-    find /usr/local/lib -depth -type d -name test -exec rm -rf {{}} + 2>/dev/null || true; \\
-    find /usr/local/lib -depth -type d -name tests -exec rm -rf {{}} + 2>/dev/null || true; \\
-    rm -rf /usr/local/share/doc /usr/local/share/man /usr/local/share/info; \\
-    rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale/* 2>/dev/null || true; \\
-    {pkg_clean}
-
-CMD ["/bin/bash"]
-"""
-
-
-def run(cmd: list[str], **kw) -> None:
-    print("+", " ".join(cmd), flush=True)
-    subprocess.run(cmd, check=True, **kw)
 
 
 def proxy_build_args(cfg: Config) -> list[str]:
@@ -390,9 +269,18 @@ def load_or_import_base(url: str, tag: str, workdir: Path, env: dict[str, str],
     return tag
 
 
+def run(cmd: list[str], **kw) -> None:
+    print("+", " ".join(cmd), flush=True)
+    subprocess.run(cmd, check=True, **kw)
+
+
 def build_and_export(cfg: Config, output_dir: Path, keep_image: bool) -> Path:
     if not shutil.which("docker"):
         sys.exit("error: docker not found on PATH")
+
+    from renderers._common import host_arch
+    from renderers import get_renderer
+
     arch = host_arch()
     name = f"{cfg.os_slug}-{cfg.py_slug}-{cfg.gcc_slug}-{arch}"
     image_tag = f"{name}:latest"
@@ -411,8 +299,11 @@ def build_and_export(cfg: Config, output_dir: Path, keep_image: bool) -> Path:
             insecure=cfg.insecure_ssl,
         )
 
+    renderer = get_renderer(cfg.renderer_name)
+    dockerfile_str = renderer(cfg, base_ref=base_ref)
+
     dockerfile = workdir / "Dockerfile"
-    dockerfile.write_text(render_dockerfile(cfg, base_ref=base_ref))
+    dockerfile.write_text(dockerfile_str)
     print(f"[+] Dockerfile written to {dockerfile}")
 
     build_cmd = ["docker", "build", *proxy_build_args(cfg),
@@ -456,7 +347,9 @@ def main() -> None:
 
     cfg = Config.load(args.config)
     if args.print_dockerfile:
-        print(render_dockerfile(cfg))
+        from renderers import get_renderer
+        renderer = get_renderer(cfg.renderer_name)
+        print(renderer(cfg))
         return
     build_and_export(cfg, args.output_dir, args.keep_image)
 
