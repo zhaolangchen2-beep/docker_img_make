@@ -122,8 +122,8 @@ no    = ""   # e.g. "localhost,127.0.0.1,::1,.internal"
 # jobs = 0
 #
 # # Output: oe2403sp1-py3138_py3143-gcc14-<arch>.tar.gz
-# # CPython 3.13.8 → /usr/local/cpython-3.13  (default: python3/python/pip3/pip)
-# # CPython 3.14.3 → /usr/local/cpython-3.14
+# # CPython 3.13.8 → /usr/local/cpython-3.13.8  (default: python3/python/pip3/pip)
+# # CPython 3.14.3 → /usr/local/cpython-3.14.3
 # # GCC 14.2.0  → /usr/local/bin/gcc  (default, priority 20)
 # # GCC 12      → /usr/bin/gcc-12    (yum, priority 10)
 # # Switch: update-alternatives --config gcc

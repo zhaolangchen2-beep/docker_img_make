@@ -7,7 +7,7 @@ via update-alternatives.
 
 from ._common import (DEFAULT_DEPS, LCOV_PERL_DEPS, PKG_CACHE_CLEAN,
                        PKG_INSTALL, insecure_install_cmd, job_expr,
-                       py_major_minor, render_coverage_stage, wget_cmd)
+                       render_coverage_stage, wget_cmd)
 
 
 def render_multi(cfg, base_ref=None) -> str:
@@ -31,12 +31,11 @@ def render_multi(cfg, base_ref=None) -> str:
 
     # ---- CPython stages ----
     python_stages: list[str] = []
-    first_mm: str | None = None
+    first_ver: str | None = None
     for ver in cfg.py_versions:
-        mm = py_major_minor(ver)
-        if first_mm is None:
-            first_mm = mm
-        prefix = f"/usr/local/cpython-{mm}"
+        if first_ver is None:
+            first_ver = ver
+        prefix = f"/usr/local/cpython-{ver}"
         url = cfg.py_source_url_template.format(version=ver)
         python_stages.append(f"""\
 # ---- Build & install CPython {ver} → {prefix} ----
@@ -62,7 +61,7 @@ RUN set -eux; \\
     echo "detected yum GCC major version: $YUM_GCC_VER"; \\
     for tool in gcc g++ cpp gcov c++; do \\
         if [ -f /usr/bin/$tool ] && [ ! -L /usr/bin/$tool ]; then \\
-            cp /usr/bin/$tool /usr/bin/$tool-$YUM_GCC_VER; \\
+            mv /usr/bin/$tool /usr/bin/$tool-$YUM_GCC_VER; \\
         fi; \\
     done; \\
     mkdir -p /usr/local/src && cd /usr/local/src; \\
@@ -98,10 +97,10 @@ RUN set -eux; \\
     default_py_stage = f"""\
 # ---- Set default python3 → CPython {cfg.py_versions[0]} ----
 RUN set -eux; \\
-    ln -sf /usr/local/cpython-{first_mm}/bin/python3 /usr/local/bin/python3; \\
-    ln -sf /usr/local/cpython-{first_mm}/bin/python3 /usr/local/bin/python; \\
-    ln -sf /usr/local/cpython-{first_mm}/bin/pip3 /usr/local/bin/pip3 2>/dev/null || true; \\
-    ln -sf /usr/local/cpython-{first_mm}/bin/pip3 /usr/local/bin/pip 2>/dev/null || true; \\
+    ln -sf /usr/local/cpython-{first_ver}/bin/python3 /usr/local/bin/python3; \\
+    ln -sf /usr/local/cpython-{first_ver}/bin/python3 /usr/local/bin/python; \\
+    ln -sf /usr/local/cpython-{first_ver}/bin/pip3 /usr/local/bin/pip3 2>/dev/null || true; \\
+    ln -sf /usr/local/cpython-{first_ver}/bin/pip3 /usr/local/bin/pip 2>/dev/null || true; \\
     python3 --version"""
 
     py_blocks = "\n".join(python_stages)
