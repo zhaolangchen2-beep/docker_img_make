@@ -58,7 +58,9 @@ RUN set -eux; \\
 # ---- Build source GCC {gcc_ver}, keep yum GCC as bootstrap ----
 RUN set -eux; \\
     YUM_GCC_VER=$(gcc -dumpversion | cut -d. -f1); \\
+    SRC_GCC_MAJOR=$(echo "{gcc_ver}" | cut -d. -f1); \\
     echo "detected yum GCC major version: $YUM_GCC_VER"; \\
+    echo "source GCC major version: $SRC_GCC_MAJOR"; \\
     mkdir -p /usr/local/src && cd /usr/local/src; \\
     {wget} -O gcc-src.tar.xz "{cfg.gcc_url}"; \\
     mkdir gcc-src && tar -xf gcc-src.tar.xz -C gcc-src --strip-components=1; \\
@@ -74,13 +76,18 @@ RUN set -eux; \\
     echo "/usr/local/lib"   >> /etc/ld.so.conf.d/local-gcc.conf; \\
     ldconfig; \\
     for tool in gcc g++ cpp gcov c++; do \\
+        if [ -f /usr/local/bin/$tool ]; then \\
+            mv /usr/local/bin/$tool /usr/local/bin/$tool-$SRC_GCC_MAJOR; \\
+        fi; \\
+    done; \\
+    for tool in gcc g++ cpp gcov c++; do \\
         if [ -f /usr/bin/$tool ] && [ ! -L /usr/bin/$tool ]; then \\
             mv /usr/bin/$tool /usr/bin/$tool-$YUM_GCC_VER; \\
         fi; \\
     done; \\
     for tool in gcc g++ cpp gcov c++; do \\
         yum_path="/usr/bin/$tool-$YUM_GCC_VER"; \\
-        src_path="/usr/local/bin/$tool"; \\
+        src_path="/usr/local/bin/$tool-$SRC_GCC_MAJOR"; \\
         if [ -f "$yum_path" ]; then \\
             update-alternatives --install /usr/bin/$tool $tool "$yum_path" 10; \\
         fi; \\
@@ -89,7 +96,7 @@ RUN set -eux; \\
         fi; \\
     done; \\
     update-alternatives --auto gcc; \\
-    echo "=== source GCC ==="; /usr/local/bin/gcc --version; \\
+    echo "=== source GCC ==="; /usr/local/bin/gcc-$SRC_GCC_MAJOR --version; \\
     echo "=== yum GCC ==="; $(readlink -f /usr/bin/gcc-$YUM_GCC_VER) --version || true; \\
     echo "=== active default ==="; gcc --version"""
 
