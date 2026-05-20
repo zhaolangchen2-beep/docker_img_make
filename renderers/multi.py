@@ -55,15 +55,10 @@ RUN set -eux; \\
     # ---- GCC stage ----
     gcc_ver = cfg.gcc_version
     gcc_stage = f"""\
-# ---- Save yum GCC, build source GCC {gcc_ver}, set up alternatives ----
+# ---- Build source GCC {gcc_ver}, keep yum GCC as bootstrap ----
 RUN set -eux; \\
     YUM_GCC_VER=$(gcc -dumpversion | cut -d. -f1); \\
     echo "detected yum GCC major version: $YUM_GCC_VER"; \\
-    for tool in gcc g++ cpp gcov c++; do \\
-        if [ -f /usr/bin/$tool ] && [ ! -L /usr/bin/$tool ]; then \\
-            mv /usr/bin/$tool /usr/bin/$tool-$YUM_GCC_VER; \\
-        fi; \\
-    done; \\
     mkdir -p /usr/local/src && cd /usr/local/src; \\
     {wget} -O gcc-src.tar.xz "{cfg.gcc_url}"; \\
     mkdir gcc-src && tar -xf gcc-src.tar.xz -C gcc-src --strip-components=1; \\
@@ -78,6 +73,11 @@ RUN set -eux; \\
     echo "/usr/local/lib64" > /etc/ld.so.conf.d/local-gcc.conf; \\
     echo "/usr/local/lib"   >> /etc/ld.so.conf.d/local-gcc.conf; \\
     ldconfig; \\
+    for tool in gcc g++ cpp gcov c++; do \\
+        if [ -f /usr/bin/$tool ] && [ ! -L /usr/bin/$tool ]; then \\
+            mv /usr/bin/$tool /usr/bin/$tool-$YUM_GCC_VER; \\
+        fi; \\
+    done; \\
     for tool in gcc g++ cpp gcov c++; do \\
         yum_path="/usr/bin/$tool-$YUM_GCC_VER"; \\
         src_path="/usr/local/bin/$tool"; \\
