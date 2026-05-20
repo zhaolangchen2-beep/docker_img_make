@@ -5,14 +5,17 @@ and keeps both the yum-installed GCC and source-compiled GCC switchable
 via update-alternatives.
 """
 
-from ._common import (DEFAULT_DEPS, PKG_CACHE_CLEAN, PKG_INSTALL,
-                       insecure_install_cmd, job_expr, py_major_minor, wget_cmd)
+from ._common import (DEFAULT_DEPS, LCOV_PERL_DEPS, PKG_CACHE_CLEAN,
+                       PKG_INSTALL, insecure_install_cmd, job_expr,
+                       py_major_minor, render_coverage_stage, wget_cmd)
 
 
 def render_multi(cfg, base_ref=None) -> str:
     """Render Dockerfile with multiple CPython versions and dual GCC."""
 
     deps = DEFAULT_DEPS[cfg.pkg_mgr] + cfg.extra_packages
+    if cfg.coverage:
+        deps += LCOV_PERL_DEPS[cfg.pkg_mgr]
     deps_str = " ".join(deps)
     install = (insecure_install_cmd(cfg.pkg_mgr)
                if cfg.insecure_ssl else PKG_INSTALL[cfg.pkg_mgr])
@@ -21,6 +24,8 @@ def render_multi(cfg, base_ref=None) -> str:
     j_expr = job_expr(cfg.jobs)
     py_cfg = " ".join(cfg.py_configure)
     gcc_cfg = " ".join(cfg.gcc_configure)
+
+    coverage_stage = render_coverage_stage(cfg.insecure_ssl) if cfg.coverage else ""
 
     from_ref = base_ref or cfg.base_image
 
@@ -108,7 +113,7 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # ---- 1. Build deps ----
 RUN {install} {deps_str} && {pkg_clean}
-
+{coverage_stage}
 {py_blocks}
 
 {default_py_stage}

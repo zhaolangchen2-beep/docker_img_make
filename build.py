@@ -55,6 +55,7 @@ class Config:
     jobs: int
     extra_packages: list[str]
     insecure_ssl: bool
+    coverage: bool
     # proxy
     proxy_http: str
     proxy_https: str
@@ -97,6 +98,7 @@ class Config:
                     jobs=int(build.get("jobs", 0)),
                     extra_packages=list(build.get("extra_packages", [])),
                     insecure_ssl=bool(build.get("insecure_ssl", False)),
+                    coverage=bool(build.get("coverage", False)),
                     proxy_http=str(proxy.get("http", "")).strip(),
                     proxy_https=str(proxy.get("https", "")).strip(),
                     proxy_no=str(proxy.get("no", "")).strip(),
@@ -149,6 +151,7 @@ class Config:
                     jobs=int(build.get("jobs", 0)),
                     extra_packages=list(build.get("extra_packages", [])),
                     insecure_ssl=bool(build.get("insecure_ssl", False)),
+                    coverage=bool(build.get("coverage", False)),
                     proxy_http=str(proxy.get("http", "")).strip(),
                     proxy_https=str(proxy.get("https", "")).strip(),
                     proxy_no=str(proxy.get("no", "")).strip(),

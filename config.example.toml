@@ -79,6 +79,9 @@ extra_packages = []
 #   - dnf/yum (sslverify=False) and apt (Acquire::https::Verify-Peer=false)
 # Use only on trusted networks where the proxy/MITM intercepts TLS.
 insecure_ssl = false
+# When true, install Perl dependencies and build lcov 2.1 from source into
+# /usr/local/bin (provides lcov + genhtml for code coverage reporting).
+coverage = false
 
 # Optional. Proxy used ONLY during the build (passed via Docker's predefined
 # proxy build-args, never written into the image config or the export).

@@ -1,7 +1,8 @@
 """Original single-CPython + single-source-GCC renderer."""
 
-from ._common import (DEFAULT_DEPS, PKG_CACHE_CLEAN, PKG_INSTALL,
-                       insecure_install_cmd, job_expr, py_major_minor,
+from ._common import (DEFAULT_DEPS, LCOV_PERL_DEPS, PKG_CACHE_CLEAN,
+                       PKG_INSTALL, insecure_install_cmd, job_expr,
+                       py_major_minor, render_coverage_stage,
                        render_llvm_stage, wget_cmd)
 
 
@@ -9,6 +10,8 @@ def render_single(cfg, base_ref=None) -> str:
     """Render the original Dockerfile (single CPython, single source GCC)."""
 
     deps = DEFAULT_DEPS[cfg.pkg_mgr] + cfg.extra_packages
+    if cfg.coverage:
+        deps += LCOV_PERL_DEPS[cfg.pkg_mgr]
     deps_str = " ".join(deps)
     install = (insecure_install_cmd(cfg.pkg_mgr)
                if cfg.insecure_ssl else PKG_INSTALL[cfg.pkg_mgr])
@@ -31,6 +34,8 @@ def render_single(cfg, base_ref=None) -> str:
         cfg.py_jit, cfg.py_llvm_version, cfg.py_llvm_url, cfg.insecure_ssl,
     )
 
+    coverage_stage = render_coverage_stage(cfg.insecure_ssl) if cfg.coverage else ""
+
     from_ref = base_ref or cfg.base_image
     return f"""FROM {from_ref}
 
@@ -39,7 +44,7 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # ---- 1. Build deps ----
 RUN {install} {deps_str} && {pkg_clean}
-{llvm_stage}
+{llvm_stage}{coverage_stage}
 # ---- 2. Build & install CPython {cfg.py_version}, set as default ----
 RUN set -eux; \\
     mkdir -p /usr/local/src && cd /usr/local/src; \\

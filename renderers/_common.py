@@ -86,6 +86,43 @@ def wget_cmd(insecure: bool) -> str:
     return "wget --no-check-certificate" if insecure else "wget"
 
 
+# ---- lcov Perl deps (per package manager) ----
+
+LCOV_PERL_DEPS = {
+    "dnf": [
+        "perl", "perl-Capture-Tiny", "perl-DateTime",
+        "perl-JSON-XS", "perl-Regexp-Common",
+    ],
+    "yum": [
+        "perl", "perl-Capture-Tiny", "perl-DateTime",
+        "perl-JSON-XS", "perl-Regexp-Common",
+    ],
+    "apt": [
+        "perl", "libcapture-tiny-perl", "libdatetime-perl",
+        "libjson-xs-perl", "libregexp-common-perl",
+    ],
+}
+
+
+# ---- Coverage stage (lcov 2.1, shared by both renderers) ----
+
+def render_coverage_stage(insecure_ssl: bool) -> str:
+    """Render the lcov 2.1 build-and-install stage."""
+    wget = wget_cmd(insecure_ssl)
+    curl_insecure = " -k" if insecure_ssl else ""
+    return f"""\
+# ---- Install lcov 2.1 → /usr/local/bin ----
+RUN set -eux; \\
+    cd /tmp; \\
+    curl{curl_insecure} -L -o lcov-2.1.tar.gz "https://github.com/linux-test-project/lcov/releases/download/v2.1/lcov-2.1.tar.gz"; \\
+    tar -xf lcov-2.1.tar.gz; \\
+    cd lcov-2.1; \\
+    make install PREFIX=/usr/local; \\
+    cd / && rm -rf /tmp/lcov-2.1 /tmp/lcov-2.1.tar.gz; \\
+    /usr/local/bin/lcov --version; \\
+    /usr/local/bin/genhtml --version"""
+
+
 # ---- LLVM stage (used by single renderer only) ----
 
 def render_llvm_stage(py_jit: bool, py_llvm_version: str,
